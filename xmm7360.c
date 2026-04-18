@@ -1074,6 +1074,12 @@ static void xmm7360_net_mux_handle_frame(struct xmm_net *xn, u8 *data, int len)
 			return;
 		}
 
+		/* raw IP interface: no L2 header, reset pointers for local delivery */
+		skb_reset_mac_header(skb);
+		skb_reset_network_header(skb);
+		skb->ip_summed = CHECKSUM_NONE;
+		skb->pkt_type = PACKET_HOST;
+
 		netif_rx(skb);
 	}
 }

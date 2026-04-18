@@ -5,7 +5,7 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=3
+pkgrel=4
 pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
