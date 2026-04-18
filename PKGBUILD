@@ -5,7 +5,7 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=12
+pkgrel=13
 pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
@@ -57,10 +57,14 @@ package() {
     install -m644 "${startdir}/INSTALLING.md"  "${pkgdir}/usr/share/doc/${pkgname}/"
     install -m644 "${startdir}/DEVICES.md"     "${pkgdir}/usr/share/doc/${pkgname}/"
 
-    # udev rule so NetworkManager/systemd-networkd pick up wwan0
+    # udev rule so NetworkManager/systemd-networkd pick up wwan0.
+    # Crucially: ENV{NM_UNMANAGED}="0" forces NM to manage the interface
+    # even though it's a raw-IP POINTOPOINT link which NM would otherwise
+    # leave alone with 'unmanaged-link-not-init'.
     install -dm755 "${pkgdir}/usr/lib/udev/rules.d"
     cat > "${pkgdir}/usr/lib/udev/rules.d/80-xmm7360.rules" <<'EOF'
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="xmm7360", NAME="wwan0"
+SUBSYSTEM=="net", ACTION=="add|change", KERNEL=="wwan0", ENV{NM_UNMANAGED}="0"
 EOF
 
     # modprobe.d: blacklist iosm so xmm7360 wins the race
