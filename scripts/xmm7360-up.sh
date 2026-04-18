@@ -164,5 +164,19 @@ log "holding PDP session (pid $RPC_PID), Ctrl+C or 'systemctl stop xmm7360' to t
 wait "$RPC_PID"
 RC=$?
 log "open_xdatachannel.py exited with code $RC"
+
+# If the RPC script exited but the link is still carrying traffic, treat it
+# as success and keep the service alive. Some firmware returns 0xffffffff
+# on ConnectSetupReq while the datachannel actually works, and the original
+# upstream script exits 1 in that case — harmless for us.
+if ip -4 -br addr show "$IFACE" 2>/dev/null | grep -q "$MY_IP" && \
+   ping -c 1 -W 3 -I "$IFACE" 1.1.1.1 >/dev/null 2>&1; then
+    log "RPC exited but $IFACE still up and reachable; holding service alive"
+    # Park here until SIGTERM from systemctl stop. We just sleep — the kernel
+    # keeps the PDP session live on the modem side as long as xmm7360.ko is
+    # loaded and wwan0 has its address.
+    while :; do sleep 3600 & wait $!; done
+fi
+
 rm -f "$PIDFILE"
 exit "$RC"

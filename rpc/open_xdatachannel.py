@@ -170,10 +170,28 @@ dcr = r.execute('UtaRPCPsConnectToDatachannelReq',
 
 csr_req = pscr['body'][:-6] + dcr['body'] + b'\x02\x04\0\0\0\0'
 
-r.execute('UtaRPCPSConnectSetupReq', csr_req)
+# Note: on some firmware/APN combinations this returns 0xffffffff even
+# though the datachannel is actually up and forwarding packets. We do not
+# treat that as fatal — the caller (xmm7360-up.sh) verifies connectivity
+# with a ping before declaring success.
+try:
+    r.execute('UtaRPCPSConnectSetupReq', csr_req)
+except Exception as e:
+    logging.warning("UtaRPCPSConnectSetupReq failed: %s (continuing anyway)", e)
 
 if not cfg.dbus:
-    sys.exit(1)
+    # Hold the PDP session open indefinitely. Exiting here would tear down
+    # the datachannel and require a systemd restart loop.
+    logging.info("PDP session established, holding (no dbus mode). "
+                 "Send SIGTERM/SIGINT to tear down.")
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    while True:
+        try:
+            time.sleep(3600)
+        except KeyboardInterrupt:
+            sys.exit(0)
 
 myconnection = None
 system_bus = dbus.SystemBus()
