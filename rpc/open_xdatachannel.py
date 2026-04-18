@@ -98,16 +98,37 @@ ipr.flush_addr(index=idx)
 ipr.link('set',
          index=idx,
          state='up')
-ipr.addr('add',
-         index=idx,
-         address=ip_addr)
+try:
+    ipr.addr('add',
+             index=idx,
+             address=ip_addr,
+             prefixlen=32)
+except Exception as e:
+    logging.warning("addr add %s/32 on wwan0 failed: %s", ip_addr, e)
 
+# Flush any stale default route we might have added previously
+try:
+    ipr.flush_routes(oif=idx)
+except Exception:
+    pass
 
 if not cfg.nodefaultroute:
-    ipr.route('add',
-              dst='default',
-              priority=cfg.metric,
-              oif=idx)
+    # wwan0 is point-to-point: no gateway, must use scope=link so the
+    # kernel (>= 6.x) accepts the route. Older kernels are fine too.
+    try:
+        ipr.route('add',
+                  dst='default',
+                  priority=cfg.metric,
+                  oif=idx,
+                  scope='link')
+    except Exception as e:
+        logging.warning(
+            "adding default route via wwan0 failed (%s); falling back to 'ip'", e)
+        import subprocess
+        subprocess.run(
+            ['ip', 'route', 'replace', 'default', 'dev', 'wwan0',
+             'metric', str(cfg.metric), 'scope', 'link'],
+            check=False)
 
 # Add DNS values to /etc/resolv.conf
 if not cfg.noresolv:
