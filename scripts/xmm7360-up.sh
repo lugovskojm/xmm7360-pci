@@ -2,7 +2,7 @@
 # xmm7360-up.sh — bring wwan0 up fully after open_xdatachannel.py.
 #
 # Usage: sudo ./scripts/xmm7360-up.sh [apn]
-#        default APN: internet (override per your SIM, e.g. internet.mts.ru)
+#        default APN: internet (override with the APN your carrier provided)
 #
 # Works both standalone (keeps open_xdatachannel.py in foreground so the
 # PDP session is alive) and under systemd (trap SIGTERM -> graceful shutdown).

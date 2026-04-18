@@ -5,8 +5,8 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=14
-pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
+pkgrel=15
+pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for modern kernels (6.6+)"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
 license=('GPL2' 'BSD')
@@ -52,7 +52,7 @@ package() {
     # Docs
     install -dm755 "${pkgdir}/usr/share/doc/${pkgname}"
     install -m644 "${startdir}/README.md"      "${pkgdir}/usr/share/doc/${pkgname}/"
-    install -m644 "${startdir}/README.X280.md" "${pkgdir}/usr/share/doc/${pkgname}/"
+    install -m644 "${startdir}/README.fork.md" "${pkgdir}/usr/share/doc/${pkgname}/"
     install -m644 "${startdir}/INSTALLING.md"  "${pkgdir}/usr/share/doc/${pkgname}/"
     install -m644 "${startdir}/DEVICES.md"     "${pkgdir}/usr/share/doc/${pkgname}/"
 
@@ -84,11 +84,9 @@ EOF
     # Sensible default config (user edits this to set APN)
     install -dm755 "${pkgdir}/etc/default"
     cat > "${pkgdir}/etc/default/xmm7360" <<'EOF'
-# APN for the LTE connection. Examples:
-#   internet.mts.ru   — MTS (Russia)
-#   internet.beeline.ru
-#   internet.tele2.ru
-#   internet
+# APN for the LTE connection. Set this to the APN your carrier gave you.
+# If you don't know it, "internet" is a common default that works on many
+# carriers; otherwise check your carrier's support page.
 XMM7360_APN=internet
 EOF
 
