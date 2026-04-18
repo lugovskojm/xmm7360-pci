@@ -90,7 +90,28 @@ while True:
     time.sleep(interval)
 
 logging.info("IP address: " + str(ip_addr))
-logging.info("DNS server(s): " + ', '.join(map(str, dns_values['v4'] + dns_values['v6'])))
+
+# Filter out None/empty DNS entries (the modem may return null IPv6 DNS on IPv4-only APNs).
+# Items are ipaddress.IPv4Address / IPv6Address objects (or str); keep only meaningful ones.
+def _clean_dns(lst):
+    out = []
+    for d in (lst or []):
+        if d is None:
+            continue
+        s = str(d).strip()
+        if not s or s in ('0.0.0.0', '::', 'None'):
+            continue
+        out.append(d)
+    return out
+
+dns_values['v4'] = _clean_dns(dns_values.get('v4'))
+dns_values['v6'] = _clean_dns(dns_values.get('v6'))
+
+all_dns = dns_values['v4'] + dns_values['v6']
+if all_dns:
+    logging.info("DNS server(s): " + ', '.join(str(d) for d in all_dns))
+else:
+    logging.info("DNS server(s): (none reported)")
 
 idx = ipr.link_lookup(ifname='wwan0')[0]
 
@@ -131,11 +152,14 @@ if not cfg.nodefaultroute:
             check=False)
 
 # Add DNS values to /etc/resolv.conf
-if not cfg.noresolv:
-    with open('/etc/resolv.conf', 'a') as resolv:
-        resolv.write('\n# Added by xmm7360\n')
-        for dns in dns_values['v4'] + dns_values['v6']:
-            resolv.write('nameserver %s\n' % dns)
+if not cfg.noresolv and all_dns:
+    try:
+        with open('/etc/resolv.conf', 'a') as resolv:
+            resolv.write('\n# Added by xmm7360\n')
+            for dns in all_dns:
+                resolv.write('nameserver %s\n' % str(dns))
+    except Exception as e:
+        logging.warning("Failed to update /etc/resolv.conf: %s", e)
 
 # this gives us way too much stuff, which we need
 pscr = r.execute('UtaMsCallPsConnectReq',
