@@ -1,0 +1,43 @@
+## xmm7360 — NetworkManager keyfile for the Intel XMM7360 / Fibocom L850-GL
+## wwan0 interface. Managed by the xmm7360-pci-dkms package.
+##
+## This profile is DYNAMIC: the IPv4 address, gateway and DNS servers are
+## assigned by xmm7360-up.sh at PDP bring-up time. Here we just tell NM
+## to manage wwan0 as a generic "ethernet" link, not to use DHCP (the modem
+## doesn't speak DHCP), and to accept whatever addresses our helpers set
+## via `ip addr add ...`. Policy routing is also handled by xmm7360-up.sh.
+##
+## After install, you'll see it in `nmcli con show` as "xmm7360". Bring it
+## up with `nmcli con up xmm7360` (which just marks wwan0 as active in NM's
+## view) or let systemd's xmm7360.service do it at boot.
+##
+## File mode MUST be 0600 (NM ignores keyfiles with other permissions).
+
+[connection]
+id=xmm7360
+uuid=e7360000-0000-4000-a000-7360c6e11ec7
+type=ethernet
+interface-name=wwan0
+autoconnect=false
+autoconnect-priority=-999
+permissions=
+
+[ethernet]
+# no MAC locking — wwan0 has a synthetic MAC that can change
+
+[ipv4]
+# "manual" + no addresses means: accept externally-configured addresses,
+# don't run DHCP, don't flush what's already on the link.
+method=manual
+may-fail=true
+never-default=false
+route-metric=1000
+# Force-set DNS so NM writes them into /etc/resolv.conf (MTS defaults;
+# override with `nmcli con modify xmm7360 ipv4.dns "..."` for other carriers).
+dns=217.66.153.252;217.66.153.251;
+dns-search=
+ignore-auto-dns=true
+ignore-auto-routes=true
+
+[ipv6]
+method=ignore
