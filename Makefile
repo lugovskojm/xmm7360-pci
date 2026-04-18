@@ -33,22 +33,42 @@ load:
 unload:
 	sudo /sbin/rmmod xmm7360
 
-# Soft reset: unbind + PCI rescan. Safer than ACPI _RST on ThinkPads where
-# the root port shares a power rail with Thunderbolt and freezes the system.
+# Soft reset: just reload the kernel module. This is the ONLY reset path
+# proven safe on ThinkPad X280. Do NOT touch the PCI slot or ACPI _RST on
+# X280 — the root port (RP09) shares a power rail with the Thunderbolt
+# controller and any reset propagates, freezing the machine hard.
 reset:
+	-sudo /sbin/rmmod xmm7360
+	sleep 1
+	sudo /sbin/modprobe xmm7360
+	sleep 2
+
+# PCI sysfs remove/rescan. Works on most laptops, but on ThinkPad X280
+# this has also been observed to freeze the machine (same RP09 power
+# rail issue). If `make reset` is not enough, try this — but save your
+# work first.
+reset-pci:
 	@if [ -z "$(PCI_SLOT)" ]; then echo "PCI_SLOT is empty: no Intel XMM7360 found via lspci. Set PCI_SLOT=0000:xx:yy.z manually."; exit 1; fi
+	@echo "WARNING: PCI remove/rescan on RP09 has frozen ThinkPad X280 in the past. Ctrl+C now to abort. Sleeping 5s..."
+	@sleep 5
 	-sudo /sbin/rmmod xmm7360
 	echo 1 | sudo tee /sys/bus/pci/devices/$(PCI_SLOT)/remove
 	sleep 2
 	echo 1 | sudo tee /sys/bus/pci/rescan
 	sleep 3
 
-# Hard reset via ACPI _RST. WARNING: on some ThinkPads (X280, some X1 Carbon
-# revisions) this freezes the machine because the root-port reset propagates
-# to the Thunderbolt controller. Only use if `make reset` is not enough and
-# you have saved your work.
+# Hard reset via ACPI _RST.
+#
+# !!! DO NOT USE ON THINKPAD X280 !!!
+#
+# On X280 (and some X1 Carbon G6 revisions) the RP09 ACPI _RST propagates
+# to the Thunderbolt controller and freezes the entire system. The user
+# must hard-power-off the laptop. Only use on hardware where you know the
+# modem root port is on its own power rail.
 reset-acpi:
 	@if [ -z "$(PCI_SLOT)" ]; then echo "PCI_SLOT is empty"; exit 1; fi
+	@echo "DANGER: ACPI _RST on RP09 freezes ThinkPad X280. Abort with Ctrl+C. Sleeping 10s..."
+	@sleep 10
 	-sudo /sbin/rmmod xmm7360
 	sudo dd if=/sys/bus/pci/devices/$(PCI_SLOT)/config of=/tmp/xmm_cfg bs=256 count=1 status=none
 	sudo modprobe acpi_call
