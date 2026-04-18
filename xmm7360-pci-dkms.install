@@ -3,12 +3,29 @@ post_install() {
     dkms build  -m xmm7360-pci -v 1.0.omarchy
     dkms install -m xmm7360-pci -v 1.0.omarchy
 
+    # Reload sysctl so rp_filter tweaks from /usr/lib/sysctl.d/99-xmm7360.conf
+    # take effect without a reboot.
+    systemd-sysctl --prefix=/proc/sys/net/ipv4 >/dev/null 2>&1 || true
+
     cat <<'EOM'
 ==> xmm7360-pci installed.
-    • Blacklist the stock iosm driver if it grabs the device first:
-        echo "blacklist iosm" | sudo tee /etc/modprobe.d/xmm7360.conf
-    • Then reboot (or: sudo rmmod iosm && sudo modprobe xmm7360).
-    • To bring up data: sudo /usr/share/xmm7360-pci/rpc/open_xdatachannel.py -a internet
+
+  1. iosm is already blacklisted via /usr/lib/modprobe.d/xmm7360.conf.
+     Unload it now (or reboot):
+         sudo rmmod iosm 2>/dev/null; sudo modprobe xmm7360
+
+  2. Set your APN in /etc/default/xmm7360, then enable the service:
+         sudoedit /etc/default/xmm7360
+         sudo systemctl enable --now xmm7360.service
+
+     For MTS Russia: XMM7360_APN=internet.mts.ru
+     For Beeline:   XMM7360_APN=internet.beeline.ru
+     For Tele2:     XMM7360_APN=internet.tele2.ru
+
+  3. Check status:
+         systemctl status xmm7360
+         journalctl -u xmm7360 -f
+         ping -I wwan0 1.1.1.1
 EOM
 }
 

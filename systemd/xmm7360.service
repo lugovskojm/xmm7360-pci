@@ -1,0 +1,39 @@
+[Unit]
+Description=Intel XMM7360 LTE modem (open_xdatachannel + post bring-up)
+Documentation=https://github.com/lugovskojm/xmm7360-pci
+# Wait for the kernel module to bind and create wwan0
+Requires=sys-subsystem-net-devices-wwan0.device
+After=sys-subsystem-net-devices-wwan0.device
+# Don't start before basic networking; we don't depend on it but we want
+# resolvectl/sysctl to be available
+After=systemd-sysctl.service
+Wants=network.target
+Before=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/xmm7360
+Environment=XMM7360_APN=internet
+ExecStart=/usr/lib/xmm7360-pci/xmm7360-up.sh ${XMM7360_APN}
+# When stopped, tear down routing rules and the PDP session
+ExecStop=/usr/lib/xmm7360-pci/xmm7360-down.sh
+# Auto-restart if the RPC script dies (e.g. modem got wedged)
+Restart=on-failure
+RestartSec=10
+# Don't spam restarts forever
+StartLimitBurst=5
+StartLimitIntervalSec=300
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xmm7360
+# Security hardening (modest — we need CAP_NET_ADMIN and /dev/xmm0)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run /var/log /etc/iproute2
+PrivateTmp=yes
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_MODULE
+
+[Install]
+WantedBy=multi-user.target

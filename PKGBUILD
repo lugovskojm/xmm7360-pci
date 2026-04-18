@@ -5,7 +5,7 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=5
+pkgrel=6
 pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
@@ -15,6 +15,7 @@ makedepends=('git')
 provides=('xmm7360-pci')
 conflicts=('xmm7360-pci')
 install=${pkgname}.install
+backup=('etc/default/xmm7360')
 
 # We build straight from the checked-out repo, so no source=() entries are
 # needed. makepkg refuses directory entries in source=(); instead we copy
@@ -66,5 +67,35 @@ EOF
     cat > "${pkgdir}/usr/lib/modprobe.d/xmm7360.conf" <<'EOF'
 # xmm7360 owns the XMM7360/L850-GL PCIe modem — keep iosm out of the way.
 blacklist iosm
+EOF
+
+    # systemd service + helper scripts in /usr/lib/xmm7360-pci/
+    install -dm755 "${pkgdir}/usr/lib/xmm7360-pci"
+    install -m755 "${startdir}/scripts/xmm7360-up.sh"   "${pkgdir}/usr/lib/xmm7360-pci/xmm7360-up.sh"
+    install -m755 "${startdir}/systemd/xmm7360-down.sh" "${pkgdir}/usr/lib/xmm7360-pci/xmm7360-down.sh"
+
+    install -dm755 "${pkgdir}/usr/lib/systemd/system"
+    install -m644 "${startdir}/systemd/xmm7360.service" "${pkgdir}/usr/lib/systemd/system/xmm7360.service"
+
+    # Sensible default config (user edits this to set APN)
+    install -dm755 "${pkgdir}/etc/default"
+    cat > "${pkgdir}/etc/default/xmm7360" <<'EOF'
+# APN for the LTE connection. Examples:
+#   internet.mts.ru   — MTS (Russia)
+#   internet.beeline.ru
+#   internet.tele2.ru
+#   internet
+XMM7360_APN=internet
+EOF
+
+    # Persistent sysctl to keep rp_filter=0 across reboots (matching what
+    # the xmm7360-up.sh script sets at runtime).
+    install -dm755 "${pkgdir}/usr/lib/sysctl.d"
+    cat > "${pkgdir}/usr/lib/sysctl.d/99-xmm7360.conf" <<'EOF'
+# Raw-IP POINTOPOINT wwan0 plus a faster default route via wifi leaves the
+# kernel's reverse-path filter rejecting return packets. Relax it.
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.wwan0.rp_filter = 0
 EOF
 }
