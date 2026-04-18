@@ -1111,8 +1111,13 @@ static void xmm7360_net_setup(struct net_device *dev)
 {
 	struct xmm_net *xn = netdev_priv(dev);
 	spin_lock_init(&xn->lock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+	hrtimer_setup(&xn->deadline, xmm7360_net_deadline_cb,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+#else
 	hrtimer_init(&xn->deadline, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	xn->deadline.function = xmm7360_net_deadline_cb;
+#endif
 	skb_queue_head_init(&xn->queue);
 
 	dev->netdev_ops = &xmm7360_netdev_ops;
@@ -1278,8 +1283,13 @@ static void xmm7360_tty_close(struct tty_struct *tty, struct file *filp)
 		tty_port_close(&qp->port, tty, filp);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static ssize_t xmm7360_tty_write(struct tty_struct *tty,
+				 const u8 *buffer, size_t count)
+#else
 static int xmm7360_tty_write(struct tty_struct *tty,
 			     const unsigned char *buffer, int count)
+#endif
 {
 	struct queue_pair *qp = tty->driver_data;
 	int written;
@@ -1290,7 +1300,7 @@ static int xmm7360_tty_write(struct tty_struct *tty,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
-static unsigned xmm7360_tty_write_room(struct tty_struct *tty)
+static unsigned int xmm7360_tty_write_room(struct tty_struct *tty)
 #else
 static int xmm7360_tty_write_room(struct tty_struct *tty)
 #endif
@@ -1453,13 +1463,13 @@ static int xmm7360_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	struct xmm_dev *xmm = kzalloc(sizeof(struct xmm_dev), GFP_KERNEL);
 	int ret;
 
-	xmm->pci_dev = dev;
-	xmm->dev = &dev->dev;
-
 	if (!xmm) {
 		dev_err(&(dev->dev), "kzalloc\n");
 		return -ENOMEM;
 	}
+
+	xmm->pci_dev = dev;
+	xmm->dev = &dev->dev;
 
 	ret = pci_enable_device(dev);
 	if (ret) {

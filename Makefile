@@ -1,9 +1,20 @@
 obj-m := xmm7360.o
 
-KVERSION := $(shell uname -r)
-KDIR := /lib/modules/$(KVERSION)/build
+KVERSION ?= $(shell uname -r)
+KDIR ?= /lib/modules/$(KVERSION)/build
 PWD := $(shell pwd)
-ccflags-y := -Wno-multichar
+ccflags-y := -Wno-multichar -Wno-declaration-after-statement
+
+# PCI slot of the modem. Auto-detected from lspci (Intel XMM7360, 8086:7360).
+# Override on the CLI if autodetect fails, e.g. `make reset PCI_SLOT=0000:02:00.0`.
+PCI_SLOT ?= $(shell lspci -D -d 8086:7360 | awk '{print $$1}' | head -n1)
+
+# ACPI path used to toggle the device power (_RST). Differs per laptop:
+#   - ThinkPad X1 Carbon G6/G7: \_SB.PCI0.RP07.PXSX._RST
+#   - ThinkPad X280:            \_SB.PCI0.RP09.PXSX._RST
+#   - ThinkPad T480/T480s:      \_SB.PCI0.RP01.PXSX._RST
+# Override on the CLI, e.g. `make reset ACPI_PATH='\_SB.PCI0.RP09.PXSX._RST'`.
+ACPI_PATH ?= \_SB.PCI0.RP09.PXSX._RST
 
 default:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
@@ -23,9 +34,10 @@ unload:
 	sudo /sbin/rmmod xmm7360
 
 reset:
+	@if [ -z "$(PCI_SLOT)" ]; then echo "PCI_SLOT is empty: no Intel XMM7360 found via lspci. Set PCI_SLOT=0000:xx:yy.z manually."; exit 1; fi
 	-sudo /sbin/rmmod xmm7360
-	sudo dd if=/sys/bus/pci/devices/0000:3b:00.0/config of=/tmp/xmm_cfg bs=256 count=1 status=none
+	sudo dd if=/sys/bus/pci/devices/$(PCI_SLOT)/config of=/tmp/xmm_cfg bs=256 count=1 status=none
 	sudo modprobe acpi_call
-	echo '\_SB.PCI0.RP07.PXSX._RST' | sudo tee /proc/acpi/call
+	echo '$(ACPI_PATH)' | sudo tee /proc/acpi/call
 	sleep 1
-	sudo dd of=/sys/bus/pci/devices/0000:3b:00.0/config if=/tmp/xmm_cfg bs=256 count=1 status=none
+	sudo dd of=/sys/bus/pci/devices/$(PCI_SLOT)/config if=/tmp/xmm_cfg bs=256 count=1 status=none
