@@ -129,7 +129,7 @@ machine survives before relying on it.
 sudo pacman -S --needed base-devel dkms linux-headers acpi_call-dkms \
                          python python-pyroute2 git
 
-git clone -b omarchy-x280 https://github.com/lugovskojm/xmm7360-pci.git
+git clone https://github.com/lugovskojm/xmm7360-pci.git
 cd xmm7360-pci
 makepkg -si
 ```
