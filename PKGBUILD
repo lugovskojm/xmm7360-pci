@@ -5,7 +5,7 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=4
+pkgrel=5
 pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
@@ -33,12 +33,19 @@ package() {
     install -m644 "${startdir}/Makefile"  "${_dkmsdir}/"
     install -m644 "${startdir}/dkms.conf" "${_dkmsdir}/"
 
-    # Userspace helpers
+    # Userspace helpers — exclude __pycache__ (transient, causes file conflicts
+    # across rebuilds since .pyc files aren't reproducible).
     install -dm755 "${_sharedir}"
-    cp -a "${startdir}/rpc"      "${_sharedir}/"
-    cp -a "${startdir}/scripts"  "${_sharedir}/"
-    cp -a "${startdir}/trace"    "${_sharedir}/"
-    cp -a "${startdir}/examples" "${_sharedir}/"
+    _copy_clean() {
+        local src="$1" dst="$2"
+        cp -a "$src" "$dst"
+        find "$dst" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+        find "$dst" -type f -name '*.pyc'     -delete 2>/dev/null || true
+    }
+    _copy_clean "${startdir}/rpc"      "${_sharedir}/"
+    _copy_clean "${startdir}/scripts"  "${_sharedir}/"
+    _copy_clean "${startdir}/trace"    "${_sharedir}/"
+    _copy_clean "${startdir}/examples" "${_sharedir}/"
     install -m644 "${startdir}/xmm7360.ini.sample" "${_sharedir}/"
 
     # Docs
