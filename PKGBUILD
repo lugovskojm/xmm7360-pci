@@ -5,13 +5,12 @@
 pkgname=xmm7360-pci-dkms
 _pkgbase=xmm7360-pci
 pkgver=1.0.omarchy
-pkgrel=13
+pkgrel=14
 pkgdesc="Intel XMM7360 / Fibocom L850-GL LTE modem driver (DKMS) — patched for kernel 6.6+ and ThinkPad X280"
 arch=('x86_64')
 url="https://github.com/xmm7360/xmm7360-pci"
 license=('GPL2' 'BSD')
 depends=('dkms' 'acpi_call-dkms' 'python' 'python-pyroute2')
-optdepends=('networkmanager: manage wwan0 via nmcli/nmtui')
 makedepends=('git')
 provides=('xmm7360-pci')
 conflicts=('xmm7360-pci')
@@ -57,14 +56,14 @@ package() {
     install -m644 "${startdir}/INSTALLING.md"  "${pkgdir}/usr/share/doc/${pkgname}/"
     install -m644 "${startdir}/DEVICES.md"     "${pkgdir}/usr/share/doc/${pkgname}/"
 
-    # udev rule so NetworkManager/systemd-networkd pick up wwan0.
-    # Crucially: ENV{NM_UNMANAGED}="0" forces NM to manage the interface
-    # even though it's a raw-IP POINTOPOINT link which NM would otherwise
-    # leave alone with 'unmanaged-link-not-init'.
+    # udev rule: name the raw-IP netdev from xmm7360 as wwan0, and tell
+    # NetworkManager to leave it alone — NM can't handle raw-IP POINTOPOINT
+    # interfaces (it errors with 'unmanaged-link-not-init' at ip-check).
+    # xmm7360.service owns the lifecycle instead.
     install -dm755 "${pkgdir}/usr/lib/udev/rules.d"
     cat > "${pkgdir}/usr/lib/udev/rules.d/80-xmm7360.rules" <<'EOF'
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="xmm7360", NAME="wwan0"
-SUBSYSTEM=="net", ACTION=="add|change", KERNEL=="wwan0", ENV{NM_UNMANAGED}="0"
+SUBSYSTEM=="net", KERNEL=="wwan0", ENV{NM_UNMANAGED}="1"
 EOF
 
     # modprobe.d: blacklist iosm so xmm7360 wins the race
@@ -104,22 +103,4 @@ net.ipv4.conf.default.rp_filter = 0
 net.ipv4.conf.wwan0.rp_filter = 0
 EOF
 
-    # --- NetworkManager integration (optional) ----------------------------
-    # All three files are tolerated by NM when it's not installed — they
-    # just sit on disk until the user installs networkmanager.
-
-    # 1. conf.d snippet: make NM manage wwan0 (default is unmanaged for WWAN).
-    install -dm755 "${pkgdir}/etc/NetworkManager/conf.d"
-    install -m644 "${startdir}/networkmanager/10-xmm7360-manage.conf" \
-        "${pkgdir}/etc/NetworkManager/conf.d/10-xmm7360-manage.conf"
-
-    # 2. Connection profile (keyfile). Must be mode 0600 or NM ignores it.
-    install -dm700 "${pkgdir}/etc/NetworkManager/system-connections"
-    install -m600 "${startdir}/networkmanager/xmm7360.nmconnection" \
-        "${pkgdir}/etc/NetworkManager/system-connections/xmm7360.nmconnection"
-
-    # 3. Dispatcher hook: starts/stops xmm7360.service on wwan0 up/down.
-    install -dm755 "${pkgdir}/etc/NetworkManager/dispatcher.d"
-    install -m755 "${startdir}/networkmanager/90-xmm7360-dispatcher.sh" \
-        "${pkgdir}/etc/NetworkManager/dispatcher.d/90-xmm7360"
 }
