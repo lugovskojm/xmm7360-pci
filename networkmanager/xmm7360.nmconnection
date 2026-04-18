@@ -1,15 +1,16 @@
 [connection]
 id=xmm7360
 uuid=e7360000-0000-4000-a000-7360c6e11ec7
-type=ethernet
+# 'generic' matches raw-IP POINTOPOINT/NOARP interfaces like wwan0;
+# 'ethernet' would be rejected by NM as "not compatible with device".
+type=generic
 interface-name=wwan0
 autoconnect=false
 
-[ethernet]
+[generic]
 
-# method=disabled: NM won't touch IPv4 on wwan0. xmm7360-up.sh owns
-# the address, routes, and policy routing. Using 'manual' here would
-# require ipv4.addresses= and fight with our helper.
+# method=disabled: NM won't touch IPv4/IPv6 on wwan0. xmm7360-up.sh owns
+# the address, routes, and policy routing.
 [ipv4]
 method=disabled
 
