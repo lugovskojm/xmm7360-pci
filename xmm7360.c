@@ -60,6 +60,8 @@
 #include <net/rtnetlink.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION("Intel XMM7360 / Fibocom L850-GL LTE modem PCIe driver");
+MODULE_AUTHOR("James Wah <xmm7360@james.wah.net.au>");
 
 static struct pci_device_id xmm7360_ids[] = { {
 						      PCI_DEVICE(0x8086,
@@ -653,7 +655,7 @@ static void xmm7360_tty_poll_qp(struct queue_pair *qp)
 	}
 }
 
-int xmm7360_cdev_open(struct inode *inode, struct file *file)
+static int xmm7360_cdev_open(struct inode *inode, struct file *file)
 {
 	struct queue_pair *qp =
 		container_of(inode->i_cdev, struct queue_pair, cdev);
@@ -661,13 +663,13 @@ int xmm7360_cdev_open(struct inode *inode, struct file *file)
 	return xmm7360_qp_start(qp);
 }
 
-int xmm7360_cdev_release(struct inode *inode, struct file *file)
+static int xmm7360_cdev_release(struct inode *inode, struct file *file)
 {
 	struct queue_pair *qp = file->private_data;
 	return xmm7360_qp_stop(qp);
 }
 
-ssize_t xmm7360_cdev_write(struct file *file, const char __user *buf,
+static ssize_t xmm7360_cdev_write(struct file *file, const char __user *buf,
 			   size_t size, loff_t *offset)
 {
 	struct queue_pair *qp = file->private_data;
@@ -681,7 +683,7 @@ ssize_t xmm7360_cdev_write(struct file *file, const char __user *buf,
 	return size;
 }
 
-ssize_t xmm7360_cdev_read(struct file *file, char __user *buf, size_t size,
+static ssize_t xmm7360_cdev_read(struct file *file, char __user *buf, size_t size,
 			  loff_t *offset)
 {
 	struct queue_pair *qp = file->private_data;
@@ -1193,7 +1195,11 @@ static irqreturn_t xmm7360_irq0(int irq, void *dev_id)
 
 	xmm7360_poll(xmm);
 	wake_up(&xmm->wq);
-	if (xmm->td_ring) {
+	/* td_ring[] is an inline array in struct xmm_dev; it's always present
+	 * once xmm itself is valid. Gate on xmm->num_ttys/state instead if
+	 * you need an "initialised" check.
+	 */
+	if (xmm->cp) {
 		xmm7360_net_poll(xmm);
 
 		for (id = 1; id < 8; id++) {
@@ -1452,7 +1458,7 @@ static int xmm7360_dev_init(struct xmm_dev *xmm)
 	return 0;
 }
 
-void xmm7360_dev_init_work(struct work_struct *work)
+static void xmm7360_dev_init_work(struct work_struct *work)
 {
 	struct xmm_dev *xmm = container_of(work, struct xmm_dev, init_work);
 	xmm7360_dev_init(xmm);
