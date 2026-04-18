@@ -33,11 +33,25 @@ load:
 unload:
 	sudo /sbin/rmmod xmm7360
 
+# Soft reset: unbind + PCI rescan. Safer than ACPI _RST on ThinkPads where
+# the root port shares a power rail with Thunderbolt and freezes the system.
 reset:
 	@if [ -z "$(PCI_SLOT)" ]; then echo "PCI_SLOT is empty: no Intel XMM7360 found via lspci. Set PCI_SLOT=0000:xx:yy.z manually."; exit 1; fi
+	-sudo /sbin/rmmod xmm7360
+	echo 1 | sudo tee /sys/bus/pci/devices/$(PCI_SLOT)/remove
+	sleep 2
+	echo 1 | sudo tee /sys/bus/pci/rescan
+	sleep 3
+
+# Hard reset via ACPI _RST. WARNING: on some ThinkPads (X280, some X1 Carbon
+# revisions) this freezes the machine because the root-port reset propagates
+# to the Thunderbolt controller. Only use if `make reset` is not enough and
+# you have saved your work.
+reset-acpi:
+	@if [ -z "$(PCI_SLOT)" ]; then echo "PCI_SLOT is empty"; exit 1; fi
 	-sudo /sbin/rmmod xmm7360
 	sudo dd if=/sys/bus/pci/devices/$(PCI_SLOT)/config of=/tmp/xmm_cfg bs=256 count=1 status=none
 	sudo modprobe acpi_call
 	echo '$(ACPI_PATH)' | sudo tee /proc/acpi/call
-	sleep 1
+	sleep 5
 	sudo dd of=/sys/bus/pci/devices/$(PCI_SLOT)/config if=/tmp/xmm_cfg bs=256 count=1 status=none
