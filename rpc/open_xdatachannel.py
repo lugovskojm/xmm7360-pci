@@ -113,43 +113,43 @@ if all_dns:
 else:
     logging.info("DNS server(s): (none reported)")
 
-idx = ipr.link_lookup(ifname='wwan0')[0]
+# NOTE: pyroute2 >= 0.7 combined with Python 3.14 has issues in
+# flush_addr / addr (address.py:107 crashes on None addresses).
+# We use the 'ip' CLI directly to avoid the whole mess — it's more
+# predictable, handles kernel 6.x quirks, and is what everyone debugs with.
+import subprocess
 
-ipr.flush_addr(index=idx)
-ipr.link('set',
-         index=idx,
-         state='up')
-try:
-    ipr.addr('add',
-             index=idx,
-             address=ip_addr,
-             prefixlen=32)
-except Exception as e:
-    logging.warning("addr add %s/32 on wwan0 failed: %s", ip_addr, e)
+IFACE = 'wwan0'
 
-# Flush any stale default route we might have added previously
-try:
-    ipr.flush_routes(oif=idx)
-except Exception:
-    pass
+def _ip(*args, check=False):
+    cmd = ['ip'] + list(args)
+    logging.debug("exec: %s", ' '.join(cmd))
+    return subprocess.run(cmd, check=check,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+
+# Bring interface up
+_ip('link', 'set', 'dev', IFACE, 'up')
+
+# Flush any stale addresses / routes from a previous session
+_ip('addr', 'flush', 'dev', IFACE)
+_ip('route', 'flush', 'dev', IFACE)
+
+# wwan0 is a point-to-point interface with CGNAT /32. We add the address
+# with 'peer 0.0.0.0/0' so the kernel creates an RTN_LOCAL entry (required
+# for bind(IP) to succeed) AND an on-link default via wwan0.
+res = _ip('addr', 'add', '%s/32' % str(ip_addr), 'peer', '0.0.0.0/0',
+          'dev', IFACE)
+if res.returncode != 0 and 'exists' not in (res.stderr or ''):
+    logging.warning("ip addr add failed: %s", res.stderr.strip())
 
 if not cfg.nodefaultroute:
-    # wwan0 is point-to-point: no gateway, must use scope=link so the
-    # kernel (>= 6.x) accepts the route. Older kernels are fine too.
-    try:
-        ipr.route('add',
-                  dst='default',
-                  priority=cfg.metric,
-                  oif=idx,
-                  scope='link')
-    except Exception as e:
-        logging.warning(
-            "adding default route via wwan0 failed (%s); falling back to 'ip'", e)
-        import subprocess
-        subprocess.run(
-            ['ip', 'route', 'replace', 'default', 'dev', 'wwan0',
-             'metric', str(cfg.metric), 'scope', 'link'],
-            check=False)
+    # Replace (not add) so re-runs don't fail with 'File exists'
+    res = _ip('route', 'replace', 'default', 'dev', IFACE,
+              'scope', 'link', 'metric', str(cfg.metric))
+    if res.returncode != 0:
+        logging.warning("ip route replace default failed: %s",
+                        res.stderr.strip())
 
 # Add DNS values to /etc/resolv.conf
 if not cfg.noresolv and all_dns:
