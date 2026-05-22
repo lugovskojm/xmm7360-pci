@@ -9,12 +9,13 @@ import struct
 import dbus
 import sys
 import time
+import subprocess
+import signal
+import atexit
 
 import rpc
 import logging
-# must do this before importing pyroute2
 logging.basicConfig(level=logging.DEBUG)
-
 
 parser = configargparse.ArgumentParser(
     description='Hacky tool to bring up XMM7x60 modem',
@@ -33,7 +34,7 @@ parser.add_argument('-m', '--metric', type=int, default=1000,
 parser.add_argument('-t', '--ip-fetch-timeout', type=int, default=1,
                     help="Retry interval in seconds when getting IP config")
 parser.add_argument('-r', '--noresolv', action="store_true",
-                    help="Don't add modem-provided DNS servers to /etc/resolv.conf")
+                    help="Don't add modem-provided DNS servers to system resolver")
 parser.add_argument('-d', '--dbus', action="store_true",
                     help="Activate Networkmanager Connection via DBUS")
 
@@ -47,6 +48,94 @@ except Exception as ex:
     exit()
 
 ipr = IPRoute()
+IFACE = 'wwan0'
+_dns_applied = False
+
+
+def _ip(*args, check=False):
+    cmd = ['ip'] + list(args)
+    logging.debug("exec: %s", ' '.join(cmd))
+    return subprocess.run(
+        cmd,
+        check=check,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+
+def _run_quiet(*args):
+    logging.debug("exec: %s", ' '.join(args))
+    return subprocess.run(
+        list(args),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+
+def _clean_dns(lst):
+    out = []
+    for d in (lst or []):
+        if d is None:
+            continue
+        s = str(d).strip()
+        if not s or s in ('0.0.0.0', '::', 'None'):
+            continue
+        out.append(str(d))
+    return out
+
+
+def _apply_resolved_dns(iface, dns_list):
+    global _dns_applied
+    if not dns_list:
+        logging.info("No DNS servers to apply")
+        return
+
+    if cfg.noresolv:
+        logging.info("Skipping DNS apply because --noresolv was specified")
+        return
+
+    check = _run_quiet('resolvectl', 'status')
+    if check.returncode != 0:
+        logging.warning("systemd-resolved/resolvectl not available, skipping DNS apply")
+        return
+
+    res = _run_quiet('resolvectl', 'dns', iface, *dns_list)
+    if res.returncode != 0:
+        logging.warning("Failed to apply DNS via resolvectl: %s", res.stderr.strip())
+        return
+
+    res = _run_quiet('resolvectl', 'domain', iface, '~.')
+    if res.returncode != 0:
+        logging.warning("Failed to set DNS domain route via resolvectl: %s", res.stderr.strip())
+
+    res = _run_quiet('resolvectl', 'default-route', iface, 'true')
+    if res.returncode != 0:
+        logging.warning("Failed to set default DNS route via resolvectl: %s", res.stderr.strip())
+
+    _dns_applied = True
+    logging.info("Applied DNS via systemd-resolved on %s: %s", iface, ', '.join(dns_list))
+
+
+def _revert_resolved_dns():
+    if not _dns_applied:
+        return
+    res = _run_quiet('resolvectl', 'revert', IFACE)
+    if res.returncode != 0:
+        logging.warning("Failed to revert DNS on %s: %s", IFACE, res.stderr.strip())
+    else:
+        logging.info("Reverted DNS settings on %s", IFACE)
+
+
+def _shutdown(signum=None, frame=None):
+    _revert_resolved_dns()
+    sys.exit(0)
+
+
+atexit.register(_revert_resolved_dns)
+signal.signal(signal.SIGTERM, _shutdown)
+signal.signal(signal.SIGINT, _shutdown)
 
 r.execute('UtaMsSmsInit')
 r.execute('UtaMsCbsInit')
@@ -57,7 +146,6 @@ r.execute('UtaMsSsInit')
 r.execute('UtaMsSimOpenReq')
 
 rpc.do_fcc_unlock(r)
-# disable aeroplane mode if had been FCC-locked. first and second args are probably don't-cares
 rpc.UtaModeSet(r, 1)
 
 r.execute('UtaMsCallPsAttachApnConfigReq',
@@ -70,16 +158,16 @@ _, status = rpc.unpack('nn', attach['body'])
 if status == 0xffffffff:
     logging.info("Attach failed - waiting to see if we just weren't ready")
 
-    while not r.attach_allowed:
-        r.pump()
+while not r.attach_allowed:
+    r.pump()
 
-    attach = r.execute('UtaMsNetAttachReq',
-                       rpc.pack_UtaMsNetAttachReq(), is_async=True)
-    _, status = rpc.unpack('nn', attach['body'])
+attach = r.execute('UtaMsNetAttachReq',
+                   rpc.pack_UtaMsNetAttachReq(), is_async=True)
+_, status = rpc.unpack('nn', attach['body'])
 
-    if status == 0xffffffff:
-        logging.error("Attach failed again, giving up")
-        sys.exit(1)
+if status == 0xffffffff:
+    logging.error("Attach failed again, giving up")
+    sys.exit(1)
 
 while True:
     ip_addr, dns_values = rpc.get_ip(r)
@@ -91,102 +179,45 @@ while True:
 
 logging.info("IP address: " + str(ip_addr))
 
-# Filter out None/empty DNS entries (the modem may return null IPv6 DNS on IPv4-only APNs).
-# Items are ipaddress.IPv4Address / IPv6Address objects (or str); keep only meaningful ones.
-def _clean_dns(lst):
-    out = []
-    for d in (lst or []):
-        if d is None:
-            continue
-        s = str(d).strip()
-        if not s or s in ('0.0.0.0', '::', 'None'):
-            continue
-        out.append(d)
-    return out
-
 dns_values['v4'] = _clean_dns(dns_values.get('v4'))
 dns_values['v6'] = _clean_dns(dns_values.get('v6'))
-
 all_dns = dns_values['v4'] + dns_values['v6']
+
 if all_dns:
-    logging.info("DNS server(s): " + ', '.join(str(d) for d in all_dns))
+    logging.info("DNS server(s): " + ', '.join(all_dns))
 else:
     logging.info("DNS server(s): (none reported)")
 
-# NOTE: pyroute2 >= 0.7 combined with Python 3.14 has issues in
-# flush_addr / addr (address.py:107 crashes on None addresses).
-# We use the 'ip' CLI directly to avoid the whole mess — it's more
-# predictable, handles kernel 6.x quirks, and is what everyone debugs with.
-import subprocess
-
-IFACE = 'wwan0'
-
-def _ip(*args, check=False):
-    cmd = ['ip'] + list(args)
-    logging.debug("exec: %s", ' '.join(cmd))
-    return subprocess.run(cmd, check=check,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True)
-
-# Bring interface up
 _ip('link', 'set', 'dev', IFACE, 'up')
-
-# Flush any stale addresses / routes from a previous session
 _ip('addr', 'flush', 'dev', IFACE)
 _ip('route', 'flush', 'dev', IFACE)
 
-# wwan0 is a point-to-point interface with CGNAT /32. We add the address
-# with 'peer 0.0.0.0/0' so the kernel creates an RTN_LOCAL entry (required
-# for bind(IP) to succeed) AND an on-link default via wwan0.
-res = _ip('addr', 'add', '%s/32' % str(ip_addr), 'peer', '0.0.0.0/0',
-          'dev', IFACE)
+res = _ip('addr', 'add', f'{ip_addr}/32', 'peer', '0.0.0.0/0', 'dev', IFACE)
 if res.returncode != 0 and 'exists' not in (res.stderr or ''):
     logging.warning("ip addr add failed: %s", res.stderr.strip())
 
 if not cfg.nodefaultroute:
-    # Replace (not add) so re-runs don't fail with 'File exists'
     res = _ip('route', 'replace', 'default', 'dev', IFACE,
               'scope', 'link', 'metric', str(cfg.metric))
     if res.returncode != 0:
-        logging.warning("ip route replace default failed: %s",
-                        res.stderr.strip())
+        logging.warning("ip route replace default failed: %s", res.stderr.strip())
 
-# Add DNS values to /etc/resolv.conf
-if not cfg.noresolv and all_dns:
-    try:
-        with open('/etc/resolv.conf', 'a') as resolv:
-            resolv.write('\n# Added by xmm7360\n')
-            for dns in all_dns:
-                resolv.write('nameserver %s\n' % str(dns))
-    except Exception as e:
-        logging.warning("Failed to update /etc/resolv.conf: %s", e)
+_apply_resolved_dns(IFACE, all_dns)
 
-# this gives us way too much stuff, which we need
 pscr = r.execute('UtaMsCallPsConnectReq',
                  rpc.pack_UtaMsCallPsConnectReq(), is_async=True)
-# this gives us a handle we need
 dcr = r.execute('UtaRPCPsConnectToDatachannelReq',
                 rpc.pack_UtaRPCPsConnectToDatachannelReq())
 
 csr_req = pscr['body'][:-6] + dcr['body'] + b'\x02\x04\0\0\0\0'
 
-# Note: on some firmware/APN combinations this returns 0xffffffff even
-# though the datachannel is actually up and forwarding packets. We do not
-# treat that as fatal — the caller (xmm7360-up.sh) verifies connectivity
-# with a ping before declaring success.
 try:
     r.execute('UtaRPCPSConnectSetupReq', csr_req)
 except Exception as e:
     logging.warning("UtaRPCPSConnectSetupReq failed: %s (continuing anyway)", e)
 
 if not cfg.dbus:
-    # Hold the PDP session open indefinitely. Exiting here would tear down
-    # the datachannel and require a systemd restart loop.
-    logging.info("PDP session established, holding (no dbus mode). "
-                 "Send SIGTERM/SIGINT to tear down.")
-    import signal
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    logging.info("PDP session established, holding (no dbus mode). Send SIGTERM/SIGINT to tear down.")
     while True:
         try:
             time.sleep(3600)
@@ -202,102 +233,23 @@ dproxy = system_bus.get_object(service_name, "/org/freedesktop/NetworkManager")
 settings = dbus.Interface(proxy, "org.freedesktop.NetworkManager.Settings")
 manager = dbus.Interface(dproxy, "org.freedesktop.NetworkManager")
 
-
 def dottedQuadToNum(ip):
-    return struct.unpack('<L', socket.inet_aton(str(ip)))[0]
+    return struct.unpack('I', socket.inet_aton(ip))[0]
 
+for c in settings.ListConnections():
+    c_proxy = system_bus.get_object(service_name, c)
+    con = dbus.Interface(c_proxy,
+                         "org.freedesktop.NetworkManager.Settings.Connection")
+    settings_dict = con.GetSettings()
+    if settings_dict['connection']['type'] == 'gsm':
+        myconnection = c
+        break
 
-def get_connections():
-    global myconnection, connection_path
-    connection_paths = settings.ListConnections()
-    for path in connection_paths:
-        con_proxy = system_bus.get_object(service_name, path)
-        settings_connection = dbus.Interface(
-            con_proxy, "org.freedesktop.NetworkManager.Settings.Connection")
-        config = settings_connection.GetSettings()
-        s_con = config["connection"]
-        print("name:%s uuid:%s type:%s" %
-              (s_con["id"], s_con["uuid"], s_con["type"]))
-        if s_con["id"] == 'xmm7360':
-            myconnection = s_con["uuid"]
-            connection_path = path
+if myconnection is None:
+    print("No gsm connection found, giving up")
+    sys.exit(1)
 
-
-get_connections()
-
-if (myconnection is not None):
-    print("setup %s" % myconnection)
-    addr = dbus.Dictionary({"address": ip_addr, "prefix": dbus.UInt32(32)})
-    connection_paths = settings.ListConnections()
-    for path in connection_paths:
-        con_proxy = system_bus.get_object(service_name, path)
-        settings_connection = dbus.Interface(
-            con_proxy, "org.freedesktop.NetworkManager.Settings.Connection")
-        config = settings_connection.GetSettings()
-        if config["connection"]["uuid"] != myconnection:
-            continue
-        print("setup connection")
-        connection_path = path
-        if "addresses" in config["ipv4"]:
-            del config["ipv4"]["addresses"]
-        if "address-data" in config["ipv4"]:
-            del config["ipv4"]["address-data"]
-        if "gateway" in config["ipv4"]:
-            del config["ipv4"]["gateway"]
-        if "dns" in config["ipv4"]:
-            del config["ipv4"]["dns"]
-
-        addr = dbus.Dictionary(
-            {"address": ip_addr, "prefix": dbus.UInt32(32)}
-        )
-        config["ipv4"]["address-data"] = dbus.Array(
-            [addr], signature=dbus.Signature("a{sv}")
-        )
-
-        dbus_ip = [dottedQuadToNum(ip) for ip in dns_values['v4']]
-
-        config["ipv4"]["gateway"] = ip_addr
-
-        config["ipv4"]["dns"] = dbus.Array([dbus.UInt32(ip) for ip in dbus_ip],
-                                           signature=dbus.Signature("u")
-                                           )
-        settings_connection.Update(config)
-else:
-    print("adding connection")
-    n_con = dbus.Dictionary({"type": "generic", "uuid": str(
-        uuid.uuid4()), "id": "xmm7360", "interface-name": "wwan0"})
-    addr = dbus.Dictionary(
-        {"address": ip_addr, "prefix": dbus.UInt32(32)}
-    )
-
-    dbus_ip = [dottedQuadToNum(ip) for ip in dns_values['v4']]
-    n_ip4 = dbus.Dictionary(
-        {
-            "address-data": dbus.Array([addr], signature=dbus.Signature("a{sv}")),
-            "gateway": ip_addr,
-            "method": "manual",
-            "dns": dbus.Array([dbus.UInt32(ip) for ip in dbus_ip], signature=dbus.Signature("u"))
-        }
-    )
-    n_ip6 = dbus.Dictionary({"method": "ignore"})
-    add_con = dbus.Dictionary(
-        {"connection": n_con, "ipv4": n_ip4, "ipv6": n_ip6})
-    settings.AddConnection(add_con)
-    get_connections()
-
-devices = manager.GetDevices()
-
-for d in devices:
-    dev_proxy = system_bus.get_object("org.freedesktop.NetworkManager", d)
-    prop_iface = dbus.Interface(dev_proxy, "org.freedesktop.DBus.Properties")
-    props = prop_iface.GetAll("org.freedesktop.NetworkManager.Device")
-    if props["Interface"] == "wwan0":
-        devpath = d
-        print("found Interface: %s" % props["Interface"])
-        print("Managed: %s" % props["Managed"])
-        if props["Managed"] == 0:
-            print("activate")
-            prop_iface.Set("org.freedesktop.NetworkManager.Device",
-                           "Managed", dbus.Boolean(1))
-
-manager.ActivateConnection(connection_path, devpath, "/")
+manager.ActivateConnection(myconnection,
+                           "/org/freedesktop/NetworkManager/Devices/0", "/")
+while True:
+    r.pump()
