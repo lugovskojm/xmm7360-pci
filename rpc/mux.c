@@ -199,6 +199,12 @@ static int tun_alloc(void)
 {
 	struct ifreq ifr;
 	int fd, ret;
+	const char *tun_name = getenv("XMM_TUN_NAME");
+	const char *no_pi_env = getenv("XMM_TUN_NO_PI");
+	int flags = IFF_TUN;
+	/* By default do not set IFF_NO_PI for broader compatibility. Set XMM_TUN_NO_PI=1 to enable */
+	if (no_pi_env && no_pi_env[0] == '1')
+		flags |= IFF_NO_PI;
 
 	if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
 		perror("tun open");
@@ -206,7 +212,11 @@ static int tun_alloc(void)
 	}
 
 	memset(&ifr, 0, sizeof(ifr));
-	ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+	ifr.ifr_flags = flags;
+	if (tun_name)
+		strncpy(ifr.ifr_name, tun_name, IFNAMSIZ - 1);
+	else
+		strncpy(ifr.ifr_name, "throne-tun", IFNAMSIZ - 1);
 
 	ret = ioctl(fd, TUNSETIFF, (void *)&ifr);
 	if (ret < 0) {
